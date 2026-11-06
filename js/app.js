@@ -57,6 +57,10 @@ const st = () => S.store;
 function getDay(date) { return normDay(st()?.json(P.day(date)), date); }
 function plan() { return st()?.json(P.plan) || { start: START, targets: { kcal: 2650, protein: 90, weight: 58 }, weeks: [] }; }
 function weekPlan(n) { return plan().weeks?.find((w) => w.n === n); }
+// 從哪一天開始統計熱量與蛋白質（計畫修正：第 4 週起）
+function nutStart() { return plan().nutritionStart || START; }
+const nutOn = (date) => date >= nutStart();
+const nutOnWeek = (n) => weekDates(n)[6] >= nutStart();
 function revisions() { return st()?.json(P.revisions)?.items || []; }
 function weeksDoc() { return st()?.json(P.weeks) || {}; }
 function tests() { return st()?.json(P.tests) || { pre: {}, post: {} }; }
@@ -173,10 +177,10 @@ function vToday() {
     <p>${wp ? esc(wp.days[dayIdx(date)] || "（未安排）") : "不在 8 週計畫期間"}</p>
   </section>
 
-  <section class="card totals">
+  ${nutOn(date) ? `<section class="card totals">
     ${bar("熱量", t.kcal, tg.kcal, "kcal", "kcal")}
     ${bar("蛋白質", t.protein, tg.protein, "g", "prot")}
-  </section>
+  </section>` : `<p class="hint">這天還沒開始統計熱量與蛋白質（${md(nutStart())} 起統計，見「歷程」的計畫修正）。</p>`}
 
   ${MEALS.map(([k, label]) => mealCard(d, k, label)).join("")}
   ${exerciseCard(d)}
@@ -232,6 +236,7 @@ function itemRow(k, it, i) {
       </div>
       <label class="mini"><input id="it-${k}-${i}-k" type="number" inputmode="numeric" data-item="${k}:${i}:kcal" value="${it.kcal ?? ""}" placeholder="?"><span>kcal</span></label>
       <label class="mini"><input id="it-${k}-${i}-p" type="number" inputmode="decimal" step="0.1" data-item="${k}:${i}:protein" value="${it.protein ?? ""}" placeholder="?"><span>g</span></label>
+      ${it.foodId && foods().some((f) => f.id === it.foodId) ? "" : `<button class="btn btn-ghost btn-xs" data-act="item-fav" data-meal="${k}" data-i="${i}">存到清單</button>`}
       <button class="icon-btn sm" data-act="item-del" data-meal="${k}" data-i="${i}" aria-label="移除">×</button>
     </div></li>`;
 }
@@ -335,8 +340,8 @@ function vWeek() {
       return txt || m.photos.length ? `<span class="cell-text">${esc(txt) || "（照片）"}</span>${tt.kcal != null ? `<span class="cell-num">${tt.kcal} kcal</span>` : ""}${m.photos.length ? `<span class="cell-photo">照片 ${m.photos.length}</span>` : ""}` : "";
     }]),
     ["運動", (d) => `${statusChip(d.exercise.status)}<span class="cell-text">${esc([d.exercise.tags.join("/"), d.exercise.detail].filter(Boolean).join(" "))}</span>${d.exercise.km ? `<span class="cell-num">${d.exercise.km} km ${pace(d.exercise.km, d.exercise.time)}</span>` : ""}`],
-    ["熱量", (d) => { const v = dayTotals(d).kcal; return v != null ? `<b class="${tg.kcal && v >= tg.kcal ? "ok" : ""}">${v}</b>` : ""; }],
-    ["蛋白質", (d) => { const v = dayTotals(d).protein; return v != null ? `<b class="${tg.protein && v >= tg.protein ? "ok" : ""}">${v} g</b>` : ""; }],
+    ["熱量", (d) => { const v = nutOn(d.date) ? dayTotals(d).kcal : null; return v != null ?`<b class="${tg.kcal && v >= tg.kcal ? "ok" : ""}">${v}</b>` : ""; }],
+    ["蛋白質", (d) => { const v = nutOn(d.date) ? dayTotals(d).protein : null; return v != null ?`<b class="${tg.protein && v >= tg.protein ? "ok" : ""}">${v} g</b>` : ""; }],
     ["體重", (d) => d.weight != null ? `${d.weight}` : ""],
   ];
   const s = weekSummary(n);
@@ -359,8 +364,8 @@ function vWeek() {
     ${statTile("運動完成", `${s.done}<small> / 7 天</small>`)}
     ${statTile("單槓", `${s.bar}<small> 次</small>`)}
     ${statTile("跑步", `${s.runKm}<small> km</small>`)}
-    ${statTile("平均熱量", `${s.kcal ?? "—"}<small> kcal</small>`)}
-    ${statTile("平均蛋白質", `${s.prot ?? "—"}<small> g</small>`)}
+    ${statTile("平均熱量", nutOnWeek(n) ? `${s.kcal ?? "—"}<small> kcal</small>` : `<small>未統計</small>`)}
+    ${statTile("平均蛋白質", nutOnWeek(n) ? `${s.prot ?? "—"}<small> g</small>` : `<small>未統計</small>`)}
     ${statTile("照片", `${s.photos}<small> 張</small>`)}
   </section>
 
@@ -387,8 +392,8 @@ function weekSummary(n) {
     if (e.tags.includes("練舞")) dance++;
     photos += MEALS.reduce((a, [k]) => a + d.meals[k].photos.length, 0) + e.photos.length;
     const t = dayTotals(d);
-    if (t.kcal != null) ks.push(t.kcal);
-    if (t.protein != null) ps.push(t.protein);
+    if (nutOn(d.date) && t.kcal != null) ks.push(t.kcal);
+    if (nutOn(d.date) && t.protein != null) ps.push(t.protein);
     if (d.weight != null) ws.push(d.weight);
   }
   const avg = (a, dp = 0) => a.length ? Math.round((a.reduce((x, y) => x + y, 0) / a.length) * 10 ** dp) / 10 ** dp : null;
@@ -402,7 +407,8 @@ function vStats() {
   const first = all[0] && all[0] < START ? all[0] : addDays(START, -14);
   const tg = plan().targets || {};
   const wPts = all.map(getDay).filter((d) => d.weight != null).map((d) => ({ date: d.date, y: d.weight }));
-  const range = Array.from({ length: diffDays(end, START) + 1 }, (_, i) => addDays(START, i));
+  const ns = nutStart();
+  const range = Array.from({ length: diffDays(end, ns) + 1 }, (_, i) => addDays(ns, i));
   const kc = range.map((date) => { const d = getDay(date); const t = dayTotals(d); return { date, v: t.kcal, partial: t.filled > t.estimated }; });
   const pr = range.map((date) => { const d = getDay(date); const t = dayTotals(d); return { date, v: t.protein, partial: t.filled > t.estimated }; });
   const runs = all.map(getDay).filter((d) => d.exercise.km && (d.exercise.tags.includes("跑步") || /跑/.test(d.exercise.detail)));
@@ -410,11 +416,11 @@ function vStats() {
   <h1 class="page-title">趨勢</h1>
   <section class="card"><h2 class="card-title">體重（kg）</h2>
     ${lineChart(wPts, { from: first, to: end, target: tg.weight, targetLabel: `目標 ${tg.weight} kg`, unit: " kg", empty: "在「今日」填體重後，這裡會畫出變化。" })}</section>
-  <section class="card"><h2 class="card-title">每日熱量（kcal）</h2>
-    ${barChart(kc, { from: START, to: end, target: tg.kcal, unit: " kcal", kind: "kcal", empty: "填了餐點熱量後會出現。" })}
+  <section class="card"><h2 class="card-title">每日熱量（kcal）<small>${md(ns)} 起統計</small></h2>
+    ${barChart(kc, { from: ns, to: end, target: tg.kcal, unit: " kcal", kind: "kcal", empty: "填了餐點熱量後會出現。" })}
     <p class="legend"><i class="lg lg-kcal"></i>熱量 <i class="lg lg-partial"></i>當天有餐點沒填熱量 <i class="lg lg-target"></i>目標 ${tg.kcal ?? "—"} kcal</p></section>
-  <section class="card"><h2 class="card-title">每日蛋白質（g）</h2>
-    ${barChart(pr, { from: START, to: end, target: tg.protein, unit: " g", kind: "prot", empty: "填了餐點蛋白質後會出現。" })}
+  <section class="card"><h2 class="card-title">每日蛋白質（g）<small>${md(ns)} 起統計</small></h2>
+    ${barChart(pr, { from: ns, to: end, target: tg.protein, unit: " g", kind: "prot", empty: "填了餐點蛋白質後會出現。" })}
     <p class="legend"><i class="lg lg-prot"></i>蛋白質 <i class="lg lg-target"></i>目標 ${tg.protein ?? "—"} g</p></section>
 
   <section class="card"><h2 class="card-title">每週統計</h2>
@@ -496,6 +502,7 @@ function vPlan() {
       <label class="field field-sm"><span>熱量（kcal）</span><input id="pt-kcal" type="number" inputmode="numeric" data-pt="kcal" value="${tg.kcal ?? ""}"></label>
       <label class="field field-sm"><span>蛋白質（g）</span><input id="pt-prot" type="number" inputmode="decimal" data-pt="protein" value="${tg.protein ?? ""}"></label>
       <label class="field field-sm"><span>目標體重（kg）</span><input id="pt-weight" type="number" inputmode="decimal" step="0.1" data-pt="weight" value="${tg.weight ?? ""}"></label>
+      <label class="field field-sm"><span>熱量／蛋白質從哪天開始統計</span><input id="pt-nut" type="date" data-pn value="${esc(nutStart())}"></label>
     </div>
   </section>
 
@@ -784,6 +791,20 @@ function onClick(e) {
       const it = d.meals[ds.meal].items[+ds.i];
       it.qty = Math.max(0.5, Math.round(((it.qty || 1) + Number(ds.d)) * 2) / 2);
     }) && render(),
+    "item-fav": () => {
+      const it = getDay(S.date).meals[ds.meal].items[+ds.i];
+      if (!it) return;
+      const existing = foods().find((f) => f.name === it.name);
+      const foodId = existing?.id || "f" + uid();
+      editFoods((doc) => {
+        const x = doc.items.find((f) => f.id === foodId);
+        if (x) { x.kcal ??= it.kcal; x.protein ??= it.protein; }
+        else doc.items.push({ id: foodId, name: it.name, kcal: it.kcal, protein: it.protein, uses: 1 });
+      });
+      editDay(S.date, (d) => { d.meals[ds.meal].items[+ds.i].foodId = foodId; });
+      toast(existing ? `已連結到清單裡的「${it.name}」` : `「${it.name}」已存到常吃清單`);
+      render();
+    },
     "item-del": () => { editDay(S.date, (d) => d.meals[ds.meal].items.splice(+ds.i, 1)); render(); },
     "ex-status": () => { editDay(S.date, (d) => { d.exercise.status = d.exercise.status === ds.v ? "" : ds.v; }); render(); },
     "ex-tag": () => { editDay(S.date, (d) => { const t = d.exercise.tags; const i = t.indexOf(ds.v); i >= 0 ? t.splice(i, 1) : t.push(ds.v); }); render(); },
@@ -934,6 +955,8 @@ $view.addEventListener("input", (e) => {
     if (ds.pd === "phase") S.planDraft.phase = t.value; else S.planDraft.days[+ds.pd] = t.value;
   } else if (ds.pt) {
     editDoc(P.plan, plan(), (doc) => { doc.targets = { ...(doc.targets || {}), [ds.pt]: num(t.value) }; });
+  } else if ("pn" in ds) {
+    if (t.value) editDoc(P.plan, plan(), (doc) => { doc.nutritionStart = t.value; });
   } else if (ds.tf) {
     editDoc(P.tests, { pre: {}, post: {} }, (doc) => setPath(doc, ds.tf, t.value));
   } else if (ds.food) {
