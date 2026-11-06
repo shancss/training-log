@@ -59,9 +59,9 @@ export function pace(km, time) {
   return secToStr(s / km) + "/km";
 }
 
-// 一餐：items 是從常吃清單或手動加入的食物（每份熱量／蛋白質 × 份數）；
-// text 是補充說明；沒有 items 時 kcal／protein 可直接手填（舊資料也是這樣）。
-export function emptyMeal() { return { items: [], text: "", photos: [], kcal: null, protein: null, shot: false }; }
+// 一餐：items 是一樣樣食物（每份熱量／蛋白質 × 份數）；note 是備註。
+// 舊資料只有 text（＋整餐 kcal／protein），沒有 items；一旦加入食物，text 會轉成第一樣食物。
+export function emptyMeal() { return { items: [], text: "", note: "", photos: [], kcal: null, protein: null, shot: false }; }
 
 const r1 = (v) => Math.round(v * 10) / 10;
 export function mealTotals(m) {
@@ -78,7 +78,15 @@ export function mealTotals(m) {
 }
 export function itemName(it) { return (it.qty || 1) !== 1 ? `${it.name}×${it.qty}` : it.name; }
 export function mealText(m) {
-  return [(m.items || []).map(itemName).join("＋"), m.text].filter(Boolean).join("＋");
+  const main = [(m.items || []).map(itemName).join("＋"), m.text].filter(Boolean).join("＋");
+  return m.note ? `${main}（${m.note}）` : main;
+}
+// 把舊的整餐文字轉成第一樣食物（加入新食物前呼叫）
+export function textToItem(m) {
+  if (m.text && !m.items.length) {
+    m.items.push({ foodId: null, name: m.text, kcal: m.kcal ?? null, protein: m.protein ?? null, qty: 1 });
+    m.text = ""; m.kcal = null; m.protein = null;
+  }
 }
 export function emptyDay(date) {
   return {
@@ -95,7 +103,13 @@ export function normDay(d, date) {
   const base = emptyDay(date);
   if (!d) return base;
   const out = { ...base, ...d, meals: { ...base.meals }, exercise: { ...base.exercise, ...(d.exercise || {}) } };
-  for (const [k] of MEALS) out.meals[k] = { ...emptyMeal(), ...(d.meals?.[k] || {}) };
+  for (const [k] of MEALS) {
+    const m = { ...emptyMeal(), ...(d.meals?.[k] || {}) };
+    m.items = (m.items || []).map((it) => ({ ...it }));
+    // 前一版：有食物時 text 是「補充說明」，其實多半是另一樣食物 → 轉成一樣食物
+    if (m.items.length && m.text) { m.items.push({ foodId: null, name: m.text, kcal: null, protein: null, qty: 1 }); m.text = ""; }
+    out.meals[k] = m;
+  }
   return out;
 }
 

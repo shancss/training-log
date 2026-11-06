@@ -5,7 +5,7 @@ import { toCSV, toMarkdown, download, photosZip, photoList } from "./export.js";
 import {
   START, WEEKS, MEALS, MEAL_LABEL, WD, EX_STATUS, EX_STATUS_LABEL, EX_TAGS, REV_TAGS, TEST_FIELDS,
   today, addDays, diffDays, weekOf, dayIdx, weekDates, weekStart, md, weekLabel, esc, num, pace, toSec, secToStr,
-  normDay, dayTotals, mealTotals, mealText, itemName, hasContent, uid,
+  normDay, dayTotals, mealTotals, mealText, itemName, hasContent, uid, textToItem,
 } from "./util.js";
 
 // ---------------------------------------------------------------- 狀態
@@ -17,6 +17,7 @@ const S = {
   weekN: null,
   picker: null,          // 開著常吃清單的餐別
   pickerQuery: "",
+  pickSel: new Set(),    // 常吃清單裡已勾選的食物 id
   revEdit: null,         // 正在編輯的修正紀錄 id 或 "new"
   revDraft: null,
   revDel: null,
@@ -121,7 +122,7 @@ function render() {
 function photoStrip(paths, owner) {
   return `<div class="photos">${paths.map((p) =>
     `<button class="thumb" data-act="photo-open" data-path="${esc(p)}" data-owner="${esc(owner)}" aria-label="查看照片"><img data-photo="${esc(p)}" alt=""></button>`).join("")}
-    <label class="photo-add"><input type="file" accept="image/*" multiple data-upload="${esc(owner)}">
+    <label class="photo-add"><input type="file" accept="image/*,.heic,.heif" multiple data-upload="${esc(owner)}">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="12" cy="13" r="3.5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
       <span>照片</span></label></div>`;
 }
@@ -201,20 +202,19 @@ function mealCard(d, k, label) {
       <h2 class="card-title">${label}</h2>
       <span class="meal-sum" data-sum="${k}">${sumText(tt)}</span>
     </header>
-    ${m.items.length ? `<ul class="items">${m.items.map((it, i) => itemRow(k, it, i)).join("")}</ul>` : ""}
-    <div class="meal-actions">
-      <button class="btn ${open ? "btn-on" : ""}" data-act="picker" data-meal="${k}">${open ? "收起清單" : "＋ 常吃清單"}</button>
-    </div>
-    ${open ? pickerPanel(k) : ""}
-    <label class="field"><span>${m.items.length ? "補充說明" : "吃了什麼"}</span>
-      <input id="f-${k}-text" type="text" data-f="meals.${k}.text" value="${esc(m.text)}" placeholder="${m.items.length ? "例如：只吃一半、加了滷蛋" : "例如：雞胸肉飯＋香蕉"}"></label>
-    ${m.items.length ? "" : `
-    <div class="field-row">
-      <label class="field field-sm"><span>熱量（kcal）</span>
-        <input id="f-${k}-kcal" type="number" inputmode="numeric" data-f="meals.${k}.kcal" data-type="num" value="${m.kcal ?? ""}"></label>
-      <label class="field field-sm"><span>蛋白質（g）</span>
-        <input id="f-${k}-prot" type="number" inputmode="decimal" step="0.1" data-f="meals.${k}.protein" data-type="num" value="${m.protein ?? ""}"></label>
+    ${m.items.length || m.text ? `<ul class="items">${m.items.map((it, i) => itemRow(k, it, i)).join("")}${!m.items.length && m.text ? legacyRow(k, m) : ""}</ul>` : ""}
+    ${open ? pickerPanel(k) : `<div class="meal-actions">
+      <button class="btn" data-act="picker" data-meal="${k}">＋ 常吃清單</button>
     </div>`}
+    <div class="quick-add">
+      <input id="qa-${k}-name" type="text" placeholder="其他食物，例如：里肌肉蛋貝果" aria-label="食物名稱">
+      <input id="qa-${k}-kcal" type="number" inputmode="decimal" placeholder="kcal" aria-label="熱量">
+      <input id="qa-${k}-prot" type="number" inputmode="decimal" step="0.1" placeholder="g" aria-label="蛋白質">
+      <button class="btn btn-primary" data-act="quick-add" data-meal="${k}">加入</button>
+      <label class="check"><input id="qa-${k}-save" type="checkbox" checked> 同時存到常吃清單</label>
+    </div>
+    <label class="field"><span>備註</span>
+      <input id="f-${k}-note" type="text" data-f="meals.${k}.note" value="${esc(m.note)}" placeholder="例如：只吃一半、飯少"></label>
     ${m.shot && !m.photos.length ? `<p class="hint">當時有拍照（照片還沒上傳）</p>` : ""}
     ${photoStrip(m.photos, "meal:" + k)}
   </article>`;
@@ -236,33 +236,40 @@ function itemRow(k, it, i) {
     </div></li>`;
 }
 
+// 舊資料：整餐只有一段文字＋整餐熱量
+function legacyRow(k, m) {
+  return `<li class="item">
+    <input id="f-${k}-text" class="item-name-input" type="text" data-f="meals.${k}.text" value="${esc(m.text)}" aria-label="食物">
+    <div class="item-ctrl">
+      <label class="mini"><input id="f-${k}-kcal" type="number" inputmode="decimal" data-f="meals.${k}.kcal" data-type="num" value="${m.kcal ?? ""}" placeholder="?"><span>kcal</span></label>
+      <label class="mini"><input id="f-${k}-prot" type="number" inputmode="decimal" step="0.1" data-f="meals.${k}.protein" data-type="num" value="${m.protein ?? ""}" placeholder="?"><span>g</span></label>
+    </div></li>`;
+}
+
 function pickerPanel(k) {
+  const n = S.pickSel.size;
   return `<div class="picker">
-    <input id="pq-${k}" class="picker-q" type="search" data-pq="${k}" value="${esc(S.pickerQuery)}" placeholder="搜尋常吃食物">
+    <div class="picker-top">
+      <input id="pq-${k}" class="picker-q" type="search" data-pq="${k}" value="${esc(S.pickerQuery)}" placeholder="搜尋常吃食物">
+      <button class="btn btn-ghost" data-act="picker" data-meal="${k}">關閉</button>
+    </div>
+    <p class="hint">點選要加入的食物，可以一次選很多樣。</p>
     <div class="picker-list" id="pl-${k}">${pickerList(k)}</div>
-    <details class="picker-new" ${foods().length ? "" : "open"}>
-      <summary>新增一樣食物</summary>
-      <div class="field-row">
-        <label class="field"><span>名稱</span><input id="nf-${k}-name" type="text" placeholder="例如：無糖豆漿 400ml"></label>
-      </div>
-      <div class="field-row">
-        <label class="field field-sm"><span>每份熱量</span><input id="nf-${k}-kcal" type="number" inputmode="numeric"></label>
-        <label class="field field-sm"><span>每份蛋白質</span><input id="nf-${k}-prot" type="number" inputmode="decimal" step="0.1"></label>
-      </div>
-      <label class="check"><input id="nf-${k}-save" type="checkbox" checked> 存到常吃清單</label>
-      <button class="btn btn-primary" data-act="new-food" data-meal="${k}">加入這餐</button>
-    </details>
+    <button class="btn btn-primary" id="pick-go-${k}" data-act="add-selected" data-meal="${k}" ${n ? "" : "disabled"}>${n ? `加入 ${n} 樣` : "加入"}</button>
   </div>`;
 }
 function pickerList(k) {
   const q = S.pickerQuery.trim().toLowerCase();
   const list = foods().filter((f) => !q || f.name.toLowerCase().includes(q))
     .sort((a, b) => (b.uses || 0) - (a.uses || 0) || a.name.localeCompare(b.name, "zh-Hant"));
-  if (!foods().length) return `<p class="hint">清單還是空的。在下面新增第一樣食物，勾選「存到常吃清單」，下次就能直接點選。</p>`;
-  if (!list.length) return `<p class="hint">找不到「${esc(S.pickerQuery)}」，可以在下面新增。</p>`;
-  return list.map((f) => `<button class="food" data-act="add-food" data-meal="${k}" data-id="${esc(f.id)}">
+  if (!foods().length) return `<p class="hint">清單還是空的。用下面的「其他食物」加入時，勾選「同時存到常吃清單」，下次就能直接點選。</p>`;
+  if (!list.length) return `<p class="hint">找不到「${esc(S.pickerQuery)}」，可以用下面的「其他食物」加入。</p>`;
+  return list.map((f) => {
+    const on = S.pickSel.has(f.id);
+    return `<button class="food${on ? " is-on" : ""}" data-act="toggle-food" data-meal="${k}" data-id="${esc(f.id)}" aria-pressed="${on}">
     <span class="food-name">${esc(f.name)}</span>
-    <span class="food-num">${f.kcal ?? "?"} kcal · ${f.protein ?? "?"} g</span></button>`).join("");
+    <span class="food-num">${f.kcal ?? "?"} kcal · ${f.protein ?? "?"} g</span></button>`;
+  }).join("");
 }
 
 function exerciseCard(d) {
@@ -647,7 +654,33 @@ function renderLightbox() {
 }
 
 // ---------------------------------------------------------------- 照片上傳
+// HEIC／HEIF（iPhone、部分 Android 相機）：瀏覽器多半無法直接讀，先用 heic2any 轉成 JPEG
+const isHeic = (f) => /image\/hei[cf]/i.test(f.type) || /\.hei[cf]$/i.test(f.name || "");
+let heicLib = null;
+function loadHeic() {
+  if (window.heic2any) return Promise.resolve(window.heic2any);
+  heicLib ||= new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js";
+    s.onload = () => resolve(window.heic2any);
+    s.onerror = () => { heicLib = null; reject(new Error("無法載入 HEIC 轉檔工具，請確認網路")); };
+    document.head.appendChild(s);
+  });
+  return heicLib;
+}
+async function decodeHeic(file) {
+  // 有些瀏覽器（Safari）本身就能讀 HEIC，先試原生
+  try { const b = await createImageBitmap(file); b.close?.(); return file; } catch {}
+  const heic2any = await loadHeic();
+  const out = await heic2any({ blob: file, toType: "image/jpeg", quality: 0.9 });
+  return Array.isArray(out) ? out[0] : out;
+}
+
 async function compress(file) {
+  if (isHeic(file)) {
+    toast("HEIC 照片轉檔中…");
+    try { file = await decodeHeic(file); } catch (e) { throw new Error(e.message || "這張 HEIC 照片無法轉檔"); }
+  }
   try {
     const bmp = await createImageBitmap(file, { imageOrientation: "from-image" });
     const max = 1600;
@@ -701,22 +734,38 @@ function onClick(e) {
     "day-prev": () => { S.date = addDays(S.date, -1); S.picker = null; render(); },
     "day-next": () => { S.date = addDays(S.date, 1); S.picker = null; render(); },
     "day-today": () => { S.date = today(); render(); },
-    picker: () => { S.picker = S.picker === ds.meal ? null : ds.meal; S.pickerQuery = ""; render(); if (S.picker) document.getElementById("pq-" + S.picker)?.focus(); },
-    "add-food": () => {
-      const f = foods().find((x) => x.id === ds.id);
-      if (!f) return;
-      editDay(S.date, (d) => d.meals[ds.meal].items.push({ foodId: f.id, name: f.name, kcal: f.kcal, protein: f.protein, qty: 1 }));
-      editFoods((doc) => { const x = doc.items.find((i) => i.id === f.id); if (x) x.uses = (x.uses || 0) + 1; });
-      toast(`已加入 ${f.name}`);
+    picker: () => { S.picker = S.picker === ds.meal ? null : ds.meal; S.pickerQuery = ""; S.pickSel = new Set(); render(); },
+    "toggle-food": () => {
+      S.pickSel.has(ds.id) ? S.pickSel.delete(ds.id) : S.pickSel.add(ds.id);
+      el.classList.toggle("is-on", S.pickSel.has(ds.id));
+      el.setAttribute("aria-pressed", S.pickSel.has(ds.id));
+      const go = document.getElementById("pick-go-" + ds.meal);
+      if (go) { const n = S.pickSel.size; go.disabled = !n; go.textContent = n ? `加入 ${n} 樣` : "加入"; }
+    },
+    "add-selected": () => {
+      const picked = foods().filter((f) => S.pickSel.has(f.id));
+      if (!picked.length) return;
+      editDay(S.date, (d) => {
+        const m = d.meals[ds.meal];
+        textToItem(m);
+        for (const f of picked) {
+          const same = m.items.find((it) => it.foodId === f.id);
+          if (same) same.qty = (same.qty || 1) + 1;
+          else m.items.push({ foodId: f.id, name: f.name, kcal: f.kcal, protein: f.protein, qty: 1 });
+        }
+      });
+      editFoods((doc) => { for (const x of doc.items) if (S.pickSel.has(x.id)) x.uses = (x.uses || 0) + 1; });
+      toast(`已加入 ${picked.map((f) => f.name).join("、")}`);
+      S.picker = null; S.pickSel = new Set();
       render();
     },
-    "new-food": () => {
+    "quick-add": () => {
       const k = ds.meal;
-      const name = document.getElementById(`nf-${k}-name`).value.trim();
-      if (!name) { toast("請輸入食物名稱"); return; }
-      const kcal = num(document.getElementById(`nf-${k}-kcal`).value);
-      const protein = num(document.getElementById(`nf-${k}-prot`).value);
-      const save = document.getElementById(`nf-${k}-save`).checked;
+      const name = document.getElementById(`qa-${k}-name`).value.trim();
+      if (!name) { toast("請輸入食物名稱"); document.getElementById(`qa-${k}-name`).focus(); return; }
+      const kcal = num(document.getElementById(`qa-${k}-kcal`).value);
+      const protein = num(document.getElementById(`qa-${k}-prot`).value);
+      const save = document.getElementById(`qa-${k}-save`).checked;
       let foodId = null;
       if (save) {
         const existing = foods().find((f) => f.name === name);
@@ -727,8 +776,8 @@ function onClick(e) {
           else doc.items.push({ id: foodId, name, kcal, protein, uses: 1 });
         });
       }
-      editDay(S.date, (d) => d.meals[k].items.push({ foodId, name, kcal, protein, qty: 1 }));
-      toast(save ? `已加入並存到常吃清單` : `已加入 ${name}`);
+      editDay(S.date, (d) => { textToItem(d.meals[k]); d.meals[k].items.push({ foodId, name, kcal, protein, qty: 1 }); });
+      toast(save ? `已加入 ${name}，也存到常吃清單` : `已加入 ${name}`);
       render();
     },
     qty: () => editDay(S.date, (d) => {
@@ -905,6 +954,8 @@ $view.addEventListener("change", (e) => {
 $view.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && e.target.id === "fa-name") { e.preventDefault(); document.querySelector('[data-act="food-add"]')?.click(); }
   if (e.key === "Enter" && e.target.id === "fq") e.target.blur();
+  const qa = e.target.id?.match(/^qa-(\w+)-(name|kcal|prot)$/);
+  if (e.key === "Enter" && qa) { e.preventDefault(); document.querySelector(`[data-act="quick-add"][data-meal="${qa[1]}"]`)?.click(); }
 });
 
 // ---------------------------------------------------------------- 同步狀態

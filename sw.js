@@ -1,5 +1,5 @@
 // 快取 App 本體，離線也能打開；資料（GitHub API）一律走網路，由 App 自己的 IndexedDB 快取處理。
-const CACHE = "training-log-v1";
+const CACHE = "training-log-v2";
 const SHELL = [
   "./", "./index.html", "./styles.css", "./manifest.webmanifest", "./icon.svg", "./icon-192.png",
   "./js/app.js", "./js/store.js", "./js/idb.js", "./js/util.js", "./js/charts.js", "./js/export.js",
